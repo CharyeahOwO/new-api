@@ -134,6 +134,11 @@ function sanitizeHtmlContent(
   return DOMPurify.sanitize(content)
 }
 
+function syncDarkClass(wrapper: HTMLElement): void {
+  const isDark = document.documentElement.classList.contains('dark')
+  wrapper.classList.toggle('dark', isDark)
+}
+
 function IsolatedHtmlContent(props: {
   className?: string
   html: string
@@ -153,22 +158,35 @@ function IsolatedHtmlContent(props: {
         'style, link[rel="stylesheet"]'
       ),
     ].map((node) => node.cloneNode(true))
+
+    const wrapper = document.createElement('div')
+    syncDarkClass(wrapper)
+    wrapper.innerHTML = props.html
+
     const contentTemplate = document.createElement('template')
-    contentTemplate.innerHTML = `${isolatedContentBaseStyles}${props.html}`
+    contentTemplate.innerHTML = isolatedContentBaseStyles
 
-    // Tailwind 类选择器无法跨 shadow boundary 匹配 host 上的 class，
-    // 排版类必须挂在 shadow root 内部的包装元素上才会生效
-    const contentWrapper = document.createElement('div')
-    contentWrapper.className = cn(
-      'prose prose-neutral dark:prose-invert max-w-none',
-      props.className
+    shadowRoot.replaceChildren(
+      ...applicationStyleNodes,
+      contentTemplate.content,
+      wrapper
     )
-    contentWrapper.appendChild(contentTemplate.content)
 
-    shadowRoot.replaceChildren(...applicationStyleNodes, contentWrapper)
-  }, [props.html, props.className])
+    const observer = new MutationObserver(() => syncDarkClass(wrapper))
+    observer.observe(document.documentElement, {
+      attributes: true,
+      attributeFilter: ['class'],
+    })
 
-  return <div ref={containerRef} className='block w-full' />
+    return () => observer.disconnect()
+  }, [props.html])
+
+  return (
+    <div
+      ref={containerRef}
+      className={cn('block w-full', props.className)}
+    />
+  )
 }
 
 export function HtmlContent(props: HtmlContentProps) {
