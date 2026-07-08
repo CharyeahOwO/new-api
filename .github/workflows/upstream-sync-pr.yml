@@ -382,42 +382,115 @@ jobs:
 
           git checkout -B "$BRANCH" "origin/${TARGET_BRANCH}"
 
-          set +e
-          git merge --no-edit "upstream/${TARGET_BRANCH}"
-          CODE=$?
-          set -e
+          BASE="${{ steps.changes.outputs.base_sha }}"
+          UPSTREAM_REF="upstream/${TARGET_BRANCH}"
 
-          if [ "$CODE" -ne 0 ]; then
-            echo "conflict=true" >> "$GITHUB_OUTPUT"
-            echo "merge_conflict=true" >> "$GITHUB_OUTPUT"
+          if [ "${{ steps.changes.outputs.touches_workflow }}" = "true" ]; then
+            echo "filtered_workflows=true" >> "$GITHUB_OUTPUT"
+            FILTERED_PATCH="upstream-review/non-workflow.patch"
 
-            git diff --name-only --diff-filter=U > upstream-review/conflict-files.txt || true
+            git diff --binary --full-index "$BASE" "$UPSTREAM_REF" -- . ':(exclude).github/workflows/**' > "$FILTERED_PATCH"
 
-            if [ ! -s upstream-review/conflict-files.txt ]; then
-              echo "(No unmerged files were reported by git diff --diff-filter=U.)" > upstream-review/conflict-files.txt
-            fi
+            if [ ! -s "$FILTERED_PATCH" ]; then
+              {
+                echo "## Workflow-only upstream update skipped"
+                echo
+                echo "上游本次只修改了 .github/workflows/**，同步分支不会携带这些 workflow 变更。"
+              } >> "$GITHUB_STEP_SUMMARY"
 
-            CONFLICT_COUNT="$(grep -cv '^$' upstream-review/conflict-files.txt || true)"
-            echo "conflict_count=${CONFLICT_COUNT}" >> "$GITHUB_OUTPUT"
-
-            if [ "$CONFLICT_COUNT" -gt 20 ]; then
-              echo "repair_abandoned=true" >> "$GITHUB_OUTPUT"
-            else
+              echo "conflict=false" >> "$GITHUB_OUTPUT"
+              echo "merge_conflict=false" >> "$GITHUB_OUTPUT"
+              echo "conflict_count=0" >> "$GITHUB_OUTPUT"
               echo "repair_abandoned=false" >> "$GITHUB_OUTPUT"
+              exit 0
             fi
+
+            set +e
+            git apply --3way --index "$FILTERED_PATCH"
+            CODE=$?
+            set -e
+
+            if [ "$CODE" -ne 0 ]; then
+              echo "conflict=true" >> "$GITHUB_OUTPUT"
+              echo "merge_conflict=true" >> "$GITHUB_OUTPUT"
+
+              git diff --name-only --diff-filter=U > upstream-review/conflict-files.txt || true
+
+              if [ ! -s upstream-review/conflict-files.txt ]; then
+                echo "(No unmerged files were reported by git diff --diff-filter=U.)" > upstream-review/conflict-files.txt
+              fi
+
+              CONFLICT_COUNT="$(grep -cv '^$' upstream-review/conflict-files.txt || true)"
+              echo "conflict_count=${CONFLICT_COUNT}" >> "$GITHUB_OUTPUT"
+
+              if [ "$CONFLICT_COUNT" -gt 20 ]; then
+                echo "repair_abandoned=true" >> "$GITHUB_OUTPUT"
+              else
+                echo "repair_abandoned=false" >> "$GITHUB_OUTPUT"
+              fi
+
+              {
+                echo "## Filtered sync conflict"
+                echo
+                echo "应用过滤掉 .github/workflows/** 的 upstream patch 时出现冲突，已保留冲突状态供自动修复。"
+                echo
+                echo "### Conflict files (${CONFLICT_COUNT})"
+                echo '```txt'
+                cat upstream-review/conflict-files.txt
+                echo '```'
+              } >> "$GITHUB_STEP_SUMMARY"
+
+              exit 0
+            fi
+
+            git diff --cached --name-only > upstream-review/applied-non-workflow-files.txt
+            git commit -m "chore: sync upstream main without workflow changes"
 
             {
-              echo "## Merge conflict"
+              echo "## Workflow files skipped"
               echo
-              echo "合并 upstream/${TARGET_BRANCH} 时出现冲突，已保留冲突状态供自动修复。"
-              echo
-              echo "### Conflict files (${CONFLICT_COUNT})"
-              echo '```txt'
-              cat upstream-review/conflict-files.txt
-              echo '```'
+              echo "上游修改了 .github/workflows/**；本同步分支已排除这些 workflow 文件，只同步其余上游变更。"
             } >> "$GITHUB_STEP_SUMMARY"
+          else
+            echo "filtered_workflows=false" >> "$GITHUB_OUTPUT"
 
-            exit 0
+            set +e
+            git merge --no-edit "$UPSTREAM_REF"
+            CODE=$?
+            set -e
+
+            if [ "$CODE" -ne 0 ]; then
+              echo "conflict=true" >> "$GITHUB_OUTPUT"
+              echo "merge_conflict=true" >> "$GITHUB_OUTPUT"
+
+              git diff --name-only --diff-filter=U > upstream-review/conflict-files.txt || true
+
+              if [ ! -s upstream-review/conflict-files.txt ]; then
+                echo "(No unmerged files were reported by git diff --diff-filter=U.)" > upstream-review/conflict-files.txt
+              fi
+
+              CONFLICT_COUNT="$(grep -cv '^$' upstream-review/conflict-files.txt || true)"
+              echo "conflict_count=${CONFLICT_COUNT}" >> "$GITHUB_OUTPUT"
+
+              if [ "$CONFLICT_COUNT" -gt 20 ]; then
+                echo "repair_abandoned=true" >> "$GITHUB_OUTPUT"
+              else
+                echo "repair_abandoned=false" >> "$GITHUB_OUTPUT"
+              fi
+
+              {
+                echo "## Merge conflict"
+                echo
+                echo "合并 upstream/${TARGET_BRANCH} 时出现冲突，已保留冲突状态供自动修复。"
+                echo
+                echo "### Conflict files (${CONFLICT_COUNT})"
+                echo '```txt'
+                cat upstream-review/conflict-files.txt
+                echo '```'
+              } >> "$GITHUB_STEP_SUMMARY"
+
+              exit 0
+            fi
           fi
 
           git diff --name-status "origin/${TARGET_BRANCH}..HEAD" > upstream-review/merge-files.txt
@@ -449,7 +522,8 @@ jobs:
             - Do not modify unrelated files.
             - Remove every conflict marker: `<<<<<<<`, `=======`, `>>>>>>>`.
             - For `web/default/src/routes/index.tsx`, `web/default/src/features/home/**`, `web/default/src/custom/luoyin/**`, and `web/default/public/wordmark-luoyin.svg`, keep the local branch version exactly and discard upstream changes.
-            - For every other file, follow upstream. This includes `/about`, admin pages, web/classic, dependencies, workflows, and backend.
+            - Workflow changes under `.github/workflows/**` are intentionally skipped by this sync workflow because `github-actions[bot]` cannot push workflow-file updates without the workflow permission.
+            - For every other file, follow upstream. This includes `/about`, admin pages, web/classic, dependencies, and backend.
             - In shared files, preserve only lines required by the locked root homepage and otherwise follow upstream.
             - Do not force push.
             - Do not change secrets, environment variables, deploy keys, credentials, or release tokens.
@@ -607,7 +681,8 @@ jobs:
           规则：
           - 本地唯一自定义是根路由 `/` 主页。
           - 锁定 `web/default/src/routes/index.tsx`、`web/default/src/features/home/**`、`web/default/src/custom/luoyin/**`、`web/default/public/wordmark-luoyin.svg`；上游对这些路径的修改一律忽略。
-          - `/about`、后台管理、web/classic、依赖、workflow、后端全部跟随上游，不得当成本地自定义。
+          - `.github/workflows/**` 由同步分支主动跳过，不跟随上游。
+          - `/about`、后台管理、web/classic、依赖、后端全部跟随上游，不得当成本地自定义。
           - 共享文件只保留根主页必需的本地代码，其余跟上游。
           - 不修改代码，不构建，不联网；信息不足就写“不确定”。
 
