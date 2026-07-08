@@ -94,15 +94,17 @@ jobs:
           done < <(git rev-list --first-parent --reverse HEAD)
 
           if [ -z "${RELEASE_COMMIT}" ]; then
+            RELEASE_COMMIT="$(git rev-parse HEAD)"
             {
-              echo "## 官方 Release 对应提交尚未同步"
+              echo "## 使用当前 fork main 作为发布提交"
               echo
-              echo "官方 Release tag \`${TAG}\` 对应的提交还不在本 fork 的 \`main\` 里。"
+              echo "官方 Release tag \`${TAG}\` 对应提交未出现在 fork main 的祖先链里。"
               echo
-              echo "先让上游同步 PR 合并，再重新运行这个 workflow。"
+              echo "这通常是因为上游同步分支跳过了 .github/workflows/** 后以补丁方式同步。"
+              echo
+              echo "本次将使用当前 fork main \`${RELEASE_COMMIT}\` 创建 fork Release。"
             } >> "$GITHUB_STEP_SUMMARY"
-            echo "::error::Fork main does not contain upstream release tag ${TAG}. Sync upstream first."
-            exit 1
+            echo "::warning::Fork main does not contain upstream release tag ${TAG}; using current fork main ${RELEASE_COMMIT}."
           fi
 
           echo "upstream_commit=${UPSTREAM_TAG_COMMIT}" >> "$GITHUB_OUTPUT"
