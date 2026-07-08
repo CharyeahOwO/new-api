@@ -195,6 +195,14 @@ jobs:
             gh release create "${args[@]}"
           fi
 
+      - name: Dispatch binary release build
+        if: steps.fork_tag.outputs.skip != 'true'
+        env:
+          GH_TOKEN: ${{ secrets.RELEASE_MIRROR_TOKEN || secrets.GITHUB_TOKEN }}
+          TAG: ${{ steps.upstream_release.outputs.tag }}
+        run: |
+          gh workflow run release.yml --repo "${GITHUB_REPOSITORY}" --ref "${TAG}"
+
       - name: Dispatch GHCR image build
         if: steps.fork_tag.outputs.skip != 'true'
         env:
