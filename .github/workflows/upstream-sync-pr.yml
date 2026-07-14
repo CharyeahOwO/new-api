@@ -405,8 +405,17 @@ jobs:
               exit 0
             fi
 
+            # 先在 merge-base 上生成一个只包含非 workflow 变更的合成提交，
+            # 再 cherry-pick 到 fork 主分支。直接对整份补丁使用 git apply --3way
+            # 会在任意单个文件无法应用时原子回滚，导致后续误推送空同步分支。
+            git checkout --detach "$BASE"
+            git apply --index "$FILTERED_PATCH"
+            git commit -m "chore: sync upstream main without workflow changes"
+            FILTERED_COMMIT="$(git rev-parse HEAD)"
+            git checkout -B "$BRANCH" "origin/${TARGET_BRANCH}"
+
             set +e
-            git apply --3way --index "$FILTERED_PATCH"
+            git cherry-pick "$FILTERED_COMMIT"
             CODE=$?
             set -e
 
@@ -417,7 +426,9 @@ jobs:
               git diff --name-only --diff-filter=U > upstream-review/conflict-files.txt || true
 
               if [ ! -s upstream-review/conflict-files.txt ]; then
-                echo "(No unmerged files were reported by git diff --diff-filter=U.)" > upstream-review/conflict-files.txt
+                echo "::error::Filtered upstream cherry-pick failed without unmerged files."
+                git status --short
+                exit 1
               fi
 
               CONFLICT_COUNT="$(grep -cv '^$' upstream-review/conflict-files.txt || true)"
@@ -432,7 +443,7 @@ jobs:
               {
                 echo "## Filtered sync conflict"
                 echo
-                echo "应用过滤掉 .github/workflows/** 的 upstream patch 时出现冲突，已保留冲突状态供自动修复。"
+                echo "应用过滤掉 .github/workflows/** 的 upstream 提交时出现冲突，已保留冲突状态供自动修复。"
                 echo
                 echo "### Conflict files (${CONFLICT_COUNT})"
                 echo '```txt'
@@ -443,8 +454,7 @@ jobs:
               exit 0
             fi
 
-            git diff --cached --name-only > upstream-review/applied-non-workflow-files.txt
-            git commit -m "chore: sync upstream main without workflow changes"
+            git diff --name-only "origin/${TARGET_BRANCH}..HEAD" > upstream-review/applied-non-workflow-files.txt
 
             {
               echo "## Workflow files skipped"
