@@ -553,7 +553,7 @@ jobs:
           claude_args: |
             --model ${{ secrets.ANTHROPIC_MODEL }}
             --max-turns 90
-            --allowedTools "Read,Grep,Glob,Edit,MultiEdit,Write,Bash(git status:*),Bash(git diff:*),Bash(git add:*),Bash(git commit:*),Bash(rg:*),Bash(sed:*),Bash(head:*),Bash(cat:*)"
+            --allowedTools "Read,Grep,Glob,Edit,MultiEdit,Write,Bash(git status:*),Bash(git diff:*),Bash(git add:*),Bash(git commit:*),Bash(git checkout:*),Bash(git restore:*),Bash(git rm:*),Bash(rg:*),Bash(sed:*),Bash(head:*),Bash(cat:*)"
 
       - name: Create conflict issue
         if: steps.changes.outputs.has_changes == 'true' && steps.merge.outputs.merge_conflict == 'true' && steps.merge.outputs.repair_abandoned == 'true' && env.DRY_RUN != 'true'
